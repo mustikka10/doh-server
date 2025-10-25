@@ -127,43 +127,36 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let globals = &self.globals;
         let self_inner = self.clone();
-        let method = req.method().to_string();
-        let path = req.uri().path().to_string();
-        let start = std::time::Instant::now();
-        
         let telemetry = globals.telemetry.clone();
+        
+        // Only allocate strings and start timer if telemetry is enabled
+        let telemetry_data = telemetry.as_ref().map(|_| {
+            (
+                req.method().to_string(),
+                req.uri().path().to_string(),
+                std::time::Instant::now(),
+            )
+        });
         
         if req.uri().path() == globals.path {
             match *req.method() {
                 Method::POST => Box::pin(async move {
                     let result = self_inner.serve_post(req).await;
-                    if let Some(ref t) = telemetry {
-                        let duration = start.elapsed().as_secs_f64();
-                        let status = result.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
-                        t.record_request(&method, &path, status);
-                        t.record_duration(&method, &path, duration);
-                        if status >= 400 {
-                            t.record_error("http_error", &path);
-                        }
+                    if let (Some(t), Some((method, path, start))) = (&telemetry, telemetry_data) {
+                        Self::record_telemetry(&t, &result, &method, &path, start);
                     }
                     result
                 }),
                 Method::GET => Box::pin(async move {
                     let result = self_inner.serve_get(req).await;
-                    if let Some(ref t) = telemetry {
-                        let duration = start.elapsed().as_secs_f64();
-                        let status = result.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
-                        t.record_request(&method, &path, status);
-                        t.record_duration(&method, &path, duration);
-                        if status >= 400 {
-                            t.record_error("http_error", &path);
-                        }
+                    if let (Some(t), Some((method, path, start))) = (&telemetry, telemetry_data) {
+                        Self::record_telemetry(&t, &result, &method, &path, start);
                     }
                     result
                 }),
                 _ => Box::pin(async move {
                     let result = http_error(StatusCode::METHOD_NOT_ALLOWED);
-                    if let Some(ref t) = telemetry {
+                    if let (Some(t), Some((method, path, _))) = (&telemetry, telemetry_data) {
                         t.record_request(&method, &path, 405);
                         t.record_error("method_not_allowed", &path);
                     }
@@ -174,17 +167,14 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
             match *req.method() {
                 Method::GET => Box::pin(async move {
                     let result = self_inner.serve_odoh_configs().await;
-                    if let Some(ref t) = telemetry {
-                        let duration = start.elapsed().as_secs_f64();
-                        let status = result.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
-                        t.record_request(&method, &path, status);
-                        t.record_duration(&method, &path, duration);
+                    if let (Some(t), Some((method, path, start))) = (&telemetry, telemetry_data) {
+                        Self::record_telemetry(&t, &result, &method, &path, start);
                     }
                     result
                 }),
                 _ => Box::pin(async move {
                     let result = http_error(StatusCode::METHOD_NOT_ALLOWED);
-                    if let Some(ref t) = telemetry {
+                    if let (Some(t), Some((method, path, _))) = (&telemetry, telemetry_data) {
                         t.record_request(&method, &path, 405);
                         t.record_error("method_not_allowed", &path);
                     }
@@ -194,7 +184,7 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
         } else {
             Box::pin(async move {
                 let result = http_error(StatusCode::NOT_FOUND);
-                if let Some(ref t) = telemetry {
+                if let (Some(t), Some((method, path, _))) = (&telemetry, telemetry_data) {
                     t.record_request(&method, &path, 404);
                     t.record_error("not_found", &path);
                 }
@@ -205,6 +195,23 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
 }
 
 impl DoH {
+    /// Helper function to record telemetry for successful requests
+    fn record_telemetry(
+        telemetry: &Telemetry,
+        result: &Result<Response<Body>, http::Error>,
+        method: &str,
+        path: &str,
+        start: std::time::Instant,
+    ) {
+        let duration = start.elapsed().as_secs_f64();
+        let status = result.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
+        telemetry.record_request(method, path, status);
+        telemetry.record_duration(method, path, duration);
+        if status >= 400 {
+            telemetry.record_error("http_error", path);
+        }
+    }
+
     async fn serve_get(&self, req: Request<Body>) -> Result<Response<Body>, http::Error> {
         match Self::parse_content_type(&req) {
             Ok(DoHType::Standard) => self.serve_doh_get(req).await,
