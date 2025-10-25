@@ -5,6 +5,7 @@ mod edns_ecs;
 mod errors;
 mod globals;
 pub mod odoh;
+pub mod telemetry;
 #[cfg(feature = "tls")]
 mod tls;
 
@@ -27,6 +28,7 @@ use tokio::runtime;
 use crate::constants::*;
 pub use crate::errors::*;
 pub use crate::globals::*;
+pub use crate::telemetry::Telemetry;
 
 pub mod reexports {
     pub use tokio;
@@ -125,19 +127,79 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let globals = &self.globals;
         let self_inner = self.clone();
+        let method = req.method().to_string();
+        let path = req.uri().path().to_string();
+        let start = std::time::Instant::now();
+        
+        let telemetry = globals.telemetry.clone();
+        
         if req.uri().path() == globals.path {
             match *req.method() {
-                Method::POST => Box::pin(async move { self_inner.serve_post(req).await }),
-                Method::GET => Box::pin(async move { self_inner.serve_get(req).await }),
-                _ => Box::pin(async { http_error(StatusCode::METHOD_NOT_ALLOWED) }),
+                Method::POST => Box::pin(async move {
+                    let result = self_inner.serve_post(req).await;
+                    if let Some(ref t) = telemetry {
+                        let duration = start.elapsed().as_secs_f64();
+                        let status = result.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
+                        t.record_request(&method, &path, status);
+                        t.record_duration(&method, &path, duration);
+                        if status >= 400 {
+                            t.record_error("http_error", &path);
+                        }
+                    }
+                    result
+                }),
+                Method::GET => Box::pin(async move {
+                    let result = self_inner.serve_get(req).await;
+                    if let Some(ref t) = telemetry {
+                        let duration = start.elapsed().as_secs_f64();
+                        let status = result.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
+                        t.record_request(&method, &path, status);
+                        t.record_duration(&method, &path, duration);
+                        if status >= 400 {
+                            t.record_error("http_error", &path);
+                        }
+                    }
+                    result
+                }),
+                _ => Box::pin(async move {
+                    let result = http_error(StatusCode::METHOD_NOT_ALLOWED);
+                    if let Some(ref t) = telemetry {
+                        t.record_request(&method, &path, 405);
+                        t.record_error("method_not_allowed", &path);
+                    }
+                    result
+                }),
             }
         } else if req.uri().path() == globals.odoh_configs_path {
             match *req.method() {
-                Method::GET => Box::pin(async move { self_inner.serve_odoh_configs().await }),
-                _ => Box::pin(async { http_error(StatusCode::METHOD_NOT_ALLOWED) }),
+                Method::GET => Box::pin(async move {
+                    let result = self_inner.serve_odoh_configs().await;
+                    if let Some(ref t) = telemetry {
+                        let duration = start.elapsed().as_secs_f64();
+                        let status = result.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
+                        t.record_request(&method, &path, status);
+                        t.record_duration(&method, &path, duration);
+                    }
+                    result
+                }),
+                _ => Box::pin(async move {
+                    let result = http_error(StatusCode::METHOD_NOT_ALLOWED);
+                    if let Some(ref t) = telemetry {
+                        t.record_request(&method, &path, 405);
+                        t.record_error("method_not_allowed", &path);
+                    }
+                    result
+                }),
             }
         } else {
-            Box::pin(async { http_error(StatusCode::NOT_FOUND) })
+            Box::pin(async move {
+                let result = http_error(StatusCode::NOT_FOUND);
+                if let Some(ref t) = telemetry {
+                    t.record_request(&method, &path, 404);
+                    t.record_error("not_found", &path);
+                }
+                result
+            })
         }
     }
 }

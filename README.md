@@ -409,6 +409,78 @@ curl -H "X-Forwarded-For: 1.2.3.4" \
 
 For maximum privacy, avoid enabling ECS or use larger prefix values (smaller subnets) like /8 for IPv4 or /32 for IPv6.
 
+## New Relic Integration
+
+The DoH proxy includes optional New Relic monitoring integration using OpenTelemetry. This provides visibility into request metrics, response times, error rates, and DNS query patterns.
+
+### Building with Telemetry Support
+
+To enable telemetry support, build with the `telemetry` feature:
+
+```sh
+cargo build --release --features telemetry
+```
+
+Or add it to your default features in `Cargo.toml`.
+
+### Configuration
+
+The New Relic integration is configured via environment variables:
+
+- **`NEW_RELIC_LICENSE_KEY`** (required): Your New Relic license key
+- **`NEW_RELIC_OTLP_ENDPOINT`** (optional): The OTLP endpoint URL. Defaults to `https://otlp.nr-data.net:4318`
+
+### Usage
+
+**Set your New Relic license key:**
+
+```sh
+export NEW_RELIC_LICENSE_KEY="your_license_key_here"
+```
+
+**Run the DoH proxy (built with telemetry feature):**
+
+```sh
+doh-proxy -H 'doh.example.com' -u 127.0.0.1:53
+```
+
+**For EU accounts, set the EU endpoint:**
+
+```sh
+export NEW_RELIC_LICENSE_KEY="your_license_key_here"
+export NEW_RELIC_OTLP_ENDPOINT="https://otlp.eu01.nr-data.net:4318"
+doh-proxy -H 'doh.example.com' -u 127.0.0.1:53
+```
+
+### Metrics Collected
+
+The following metrics are automatically exported to New Relic:
+
+- **`doh.requests.total`**: Total number of DoH requests
+  - Labels: `method`, `path`, `status`
+- **`doh.request.duration`**: Duration of DoH requests in seconds
+  - Labels: `method`, `path`
+- **`doh.errors.total`**: Total number of errors
+  - Labels: `error_type`, `endpoint`
+- **`doh.dns_queries.total`**: Total number of DNS queries by type
+  - Labels: `query_type`, `is_json`
+
+### Viewing Metrics in New Relic
+
+Once configured and running:
+
+1. Log into your New Relic account
+2. Navigate to **Query your data** or use the **Data Explorer**
+3. Query metrics using NRQL, for example:
+   ```sql
+   FROM Metric SELECT rate(sum(doh.requests.total), 1 minute) 
+   WHERE service.name = 'doh-proxy' TIMESERIES
+   ```
+
+### Disabling Telemetry
+
+If you build without the `telemetry` feature (default), all telemetry code is compiled out and has zero runtime overhead. To disable telemetry at runtime even when built with the feature, simply don't set the `NEW_RELIC_LICENSE_KEY` environment variable.
+
 ## Oblivious DoH (ODoH)
 
 Oblivious DoH is similar to Anonymized DNSCrypt, but for DoH. It requires relays, but also upstream DoH servers that support the protocol.

@@ -39,6 +39,18 @@ fn main() {
         }
     };
 
+    // Initialize telemetry
+    let telemetry = match Telemetry::init() {
+        Ok(t) => {
+            println!("Info: Telemetry initialized successfully");
+            Some(t)
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to initialize telemetry: {}", e);
+            None
+        }
+    };
+
     let listen_address = match LISTEN_ADDRESS.parse() {
         Ok(addr) => addr,
         Err(e) => {
@@ -88,6 +100,7 @@ fn main() {
         odoh_rotator: Arc::new(rotator),
 
         runtime_handle: runtime.handle().clone(),
+        telemetry,
     };
     parse_opts(&mut globals);
     let doh = DoH {

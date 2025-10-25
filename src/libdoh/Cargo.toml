@@ -13,6 +13,7 @@ edition = "2018"
 [features]
 default = ["tls"]
 tls = ["tokio-rustls"]
+telemetry = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp"]
 
 [dependencies]
 anyhow = "1.0.99"
@@ -43,6 +44,9 @@ tokio-rustls = { version = "^0.24.1", features = [
     "early-data",
 ], optional = true }
 rustls-pemfile = "^1.0.4"
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.31", features = ["metrics", "http-proto", "reqwest-client"], optional = true }
 
 [profile.release]
 codegen-units = 1
