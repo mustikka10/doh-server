@@ -14,6 +14,7 @@ readme = "README.md"
 [features]
 default = ["tls"]
 tls = ["libdoh/tls"]
+telemetry = ["libdoh/telemetry"]
 
 [dependencies]
 libdoh = { path = "src/libdoh", version = "0.9.14", default-features = false }

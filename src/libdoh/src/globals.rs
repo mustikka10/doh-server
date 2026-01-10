@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::runtime;
 
 use crate::odoh::ODoHRotator;
+use crate::telemetry::Telemetry;
 
 #[derive(Debug)]
 pub struct Globals {
@@ -38,6 +39,7 @@ pub struct Globals {
     pub odoh_rotator: Arc<ODoHRotator>,
 
     pub runtime_handle: runtime::Handle,
+    pub telemetry: Option<Telemetry>,
 }
 
 #[derive(Debug, Clone, Default)]
