@@ -55,9 +55,14 @@ impl Telemetry {
 
                 let exporter = exporter_builder.build()?;
 
+                // Export interval is configurable via TELEMETRY_EXPORT_INTERVAL_SECS (default: 60 seconds).
+                let export_interval_secs = match env::var("TELEMETRY_EXPORT_INTERVAL_SECS") {
+                    Ok(val) => val.parse::<u64>().unwrap_or(60),
+                    Err(_) => 60,
+                };
                 let reader =
                     PeriodicReader::builder(exporter)
-                        .with_interval(Duration::from_secs(60))
+                        .with_interval(Duration::from_secs(export_interval_secs))
                         .build();
 
                 let resource = Resource::builder_empty()
