@@ -8,9 +8,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-      - uses: hecrj/setup-rust-action@v2
-        with:
-          rust-version: stable
+      - uses: dtolnay/rust-toolchain@stable
       - name: Check Cargo availability
         run: cargo --version
       - name: Check Rustup default toolchain
