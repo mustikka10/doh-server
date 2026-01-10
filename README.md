@@ -429,6 +429,7 @@ The New Relic integration is configured via environment variables:
 
 - **`NEW_RELIC_LICENSE_KEY`** (required): Your New Relic license key
 - **`NEW_RELIC_OTLP_ENDPOINT`** (optional): The OTLP endpoint URL. Defaults to `https://otlp.nr-data.net:4318`
+- **`TELEMETRY_EXPORT_INTERVAL_SECS`** (optional): How often metrics are exported to New Relic, in seconds. Defaults to `60`
 
 ### Usage
 
