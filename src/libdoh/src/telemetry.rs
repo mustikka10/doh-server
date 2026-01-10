@@ -74,7 +74,7 @@ impl Telemetry {
                     .build()
             } else {
                 // No New Relic configured, use noop provider
-                eprintln!("Info: NEW_RELIC_LICENSE_KEY not set, telemetry disabled");
+                eprintln!("Warning: NEW_RELIC_LICENSE_KEY not set, telemetry disabled");
                 SdkMeterProvider::builder().build()
             };
 

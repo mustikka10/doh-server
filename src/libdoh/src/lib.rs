@@ -142,23 +142,23 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
             match *req.method() {
                 Method::POST => Box::pin(async move {
                     let result = self_inner.serve_post(req).await;
-                    if let (Some(t), Some((method, path, start))) = (&telemetry, telemetry_data) {
-                        Self::record_telemetry(&t, &result, &method, &path, start);
+                    if let (Some(t), Some(data)) = (&telemetry, &telemetry_data) {
+                        Self::record_telemetry(t, &result, &data.0, &data.1, data.2);
                     }
                     result
                 }),
                 Method::GET => Box::pin(async move {
                     let result = self_inner.serve_get(req).await;
-                    if let (Some(t), Some((method, path, start))) = (&telemetry, telemetry_data) {
-                        Self::record_telemetry(&t, &result, &method, &path, start);
+                    if let (Some(t), Some(data)) = (&telemetry, &telemetry_data) {
+                        Self::record_telemetry(t, &result, &data.0, &data.1, data.2);
                     }
                     result
                 }),
                 _ => Box::pin(async move {
                     let result = http_error(StatusCode::METHOD_NOT_ALLOWED);
-                    if let (Some(t), Some((method, path, _))) = (&telemetry, telemetry_data) {
-                        t.record_request(&method, &path, 405);
-                        t.record_error("method_not_allowed", &path);
+                    if let (Some(t), Some(data)) = (&telemetry, &telemetry_data) {
+                        t.record_request(&data.0, &data.1, 405);
+                        t.record_error("method_not_allowed", &data.1);
                     }
                     result
                 }),
@@ -167,16 +167,16 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
             match *req.method() {
                 Method::GET => Box::pin(async move {
                     let result = self_inner.serve_odoh_configs().await;
-                    if let (Some(t), Some((method, path, start))) = (&telemetry, telemetry_data) {
-                        Self::record_telemetry(&t, &result, &method, &path, start);
+                    if let (Some(t), Some(data)) = (&telemetry, &telemetry_data) {
+                        Self::record_telemetry(t, &result, &data.0, &data.1, data.2);
                     }
                     result
                 }),
                 _ => Box::pin(async move {
                     let result = http_error(StatusCode::METHOD_NOT_ALLOWED);
-                    if let (Some(t), Some((method, path, _))) = (&telemetry, telemetry_data) {
-                        t.record_request(&method, &path, 405);
-                        t.record_error("method_not_allowed", &path);
+                    if let (Some(t), Some(data)) = (&telemetry, &telemetry_data) {
+                        t.record_request(&data.0, &data.1, 405);
+                        t.record_error("method_not_allowed", &data.1);
                     }
                     result
                 }),
@@ -184,9 +184,9 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
         } else {
             Box::pin(async move {
                 let result = http_error(StatusCode::NOT_FOUND);
-                if let (Some(t), Some((method, path, _))) = (&telemetry, telemetry_data) {
-                    t.record_request(&method, &path, 404);
-                    t.record_error("not_found", &path);
+                if let (Some(t), Some(data)) = (&telemetry, &telemetry_data) {
+                    t.record_request(&data.0, &data.1, 404);
+                    t.record_error("not_found", &data.1);
                 }
                 result
             })
