@@ -13,6 +13,7 @@ edition = "2021"
 [features]
 default = ["tls"]
 tls = ["tokio-rustls"]
+tailscale = ["dep:tailscale-localapi"]
 
 [dependencies]
 anyhow = "1.0"
@@ -44,6 +45,7 @@ tokio-rustls = { version = "^0.24.1", features = [
     "early-data",
 ], optional = true }
 rustls-pemfile = "^1.0"
+tailscale-localapi = { version = "0.5.0", optional = true }
 
 [profile.release]
 codegen-units = 1
