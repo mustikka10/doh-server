@@ -1,9 +1,6 @@
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[macro_use]
-extern crate clap;
-
 mod config;
 mod constants;
 mod utils;

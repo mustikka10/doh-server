@@ -8,19 +8,19 @@ license = "MIT"
 homepage = "https://github.com/jedisct1/rust-doh"
 repository = "https://github.com/jedisct1/rust-doh"
 categories = ["asynchronous", "network-programming", "command-line-utilities"]
-edition = "2018"
+edition = "2021"
 
 [features]
 default = ["tls"]
 tls = ["tokio-rustls"]
 
 [dependencies]
-anyhow = "1.0.99"
-arc-swap = "1.7.1"
-base64 = "0.22.1"
-byteorder = "1.5.0"
-bytes = "1.10.1"
-futures = "0.3.31"
+anyhow = "1.0"
+arc-swap = "1"
+base64 = "0.22"
+byteorder = "1"
+bytes = "1"
+futures = "0.3"
 hyper = { version = "^0.14.32", default-features = false, features = [
     "server",
     "http1",
@@ -28,11 +28,11 @@ hyper = { version = "^0.14.32", default-features = false, features = [
     "stream",
     "runtime",
 ] }
-odoh-rs = "1.0.4"
-rand = "0.9.2"
+odoh-rs = "1.0"
+rand = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.47.1", features = [
+tokio = { version = "1", features = [
     "net",
     "rt-multi-thread",
     "time",
@@ -43,7 +43,7 @@ urlencoding = "2.1"
 tokio-rustls = { version = "^0.24.1", features = [
     "early-data",
 ], optional = true }
-rustls-pemfile = "^1.0.4"
+rustls-pemfile = "^1.0"
 
 [profile.release]
 codegen-units = 1
