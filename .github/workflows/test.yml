@@ -21,3 +21,6 @@ jobs:
       - name: Build with default features
         run: |
           env RUSTFLAGS="-C link-arg=-s" cargo check
+      - name: Run tests
+        run: |
+          env RUSTFLAGS="-C link-arg=-s" cargo test
