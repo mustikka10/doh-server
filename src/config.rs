@@ -3,7 +3,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSoc
 use std::path::PathBuf;
 use std::time::Duration;
 
-use clap::{Arg, ArgAction::SetTrue};
+use clap::{command, Arg, ArgAction::SetTrue};
 use libdoh::*;
 
 use crate::constants::*;
