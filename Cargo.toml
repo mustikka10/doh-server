@@ -14,7 +14,6 @@ readme = "README.md"
 [features]
 default = ["tls"]
 tls = ["libdoh/tls"]
-tailscale = ["libdoh/tailscale"]
 
 [dependencies]
 libdoh = { path = "src/libdoh", version = "0.9.15", default-features = false }
