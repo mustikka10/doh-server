@@ -317,20 +317,12 @@ impl DoH {
         };
 
         let server_url = format!("https://{}{}", hostname, self.globals.path);
-        let uuid = format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-            rand::random::<u32>(),
-            rand::random::<u16>(),
-            (rand::random::<u16>() & 0x0fff) | 0x4000,
-            (rand::random::<u16>() & 0x3fff) | 0x8000,
-            rand::random::<u64>() & 0xffff_ffff_ffff,
-        );
-        let payload_uuid = format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-            rand::random::<u32>(),
-            rand::random::<u16>(),
-            (rand::random::<u16>() & 0x0fff) | 0x4000,
-            (rand::random::<u16>() & 0x3fff) | 0x8000,
-            rand::random::<u64>() & 0xffff_ffff_ffff,
-        );
+
+        // Generate deterministic UUIDs from the hostname so the profile is
+        // identical on every download (allows caching and avoids per-request
+        // uniqueness that could be used as a tracking vector).
+        let uuid = Self::hostname_uuid(&hostname, 0);
+        let payload_uuid = Self::hostname_uuid(&hostname, 1);
 
         let profile = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -395,9 +387,41 @@ impl DoH {
                 hyper::header::CONTENT_DISPOSITION,
                 "attachment; filename=\"doh-profile.mobileconfig\"",
             )
-            .header(hyper::header::CACHE_CONTROL, "no-store")
+            .header(hyper::header::CACHE_CONTROL, "max-age=3600")
             .body(Body::from(profile))
             .or_else(|_| http_error(StatusCode::INTERNAL_SERVER_ERROR))
+    }
+
+    /// Produce a deterministic UUID v4-shaped string derived from `hostname`
+    /// and a `salt` index. Uses a simple FNV-1a hash over the input bytes to
+    /// generate 128 bits of stable data, then formats them with the version 4
+    /// and variant bits applied.
+    fn hostname_uuid(hostname: &str, salt: u64) -> String {
+        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+        const FNV_PRIME: u64 = 0x00000100000001b3;
+
+        let mut h = FNV_OFFSET ^ salt.wrapping_mul(FNV_PRIME);
+        for &b in hostname.as_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+        // Derive a second 64-bit word from a different starting point.
+        let mut h2 = FNV_OFFSET ^ (salt.wrapping_add(1)).wrapping_mul(FNV_PRIME);
+        for &b in hostname.as_bytes().iter().rev() {
+            h2 ^= b as u64;
+            h2 = h2.wrapping_mul(FNV_PRIME);
+        }
+
+        let time_low = (h >> 32) as u32;
+        let time_mid = (h >> 16) as u16;
+        let time_hi_ver = ((h as u16) & 0x0fff) | 0x4000;
+        let clock_seq = ((h2 >> 48) as u16 & 0x3fff) | 0x8000;
+        let node = h2 & 0xffff_ffff_ffff;
+
+        format!(
+            "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+            time_low, time_mid, time_hi_ver, clock_seq, node
+        )
     }
 
     /// Parse query parameters from URL query string into DnsJsonQuery
