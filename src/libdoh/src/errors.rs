@@ -35,6 +35,62 @@ impl std::fmt::Display for DoHError {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn test_display_simple_variants() {
+        assert_eq!(DoHError::Incomplete.to_string(), "Incomplete");
+        assert_eq!(DoHError::InvalidData.to_string(), "Invalid data");
+        assert_eq!(DoHError::TooLarge.to_string(), "Too large");
+        assert_eq!(DoHError::UpstreamIssue.to_string(), "Upstream error");
+        assert_eq!(DoHError::UpstreamTimeout.to_string(), "Upstream timeout");
+        assert_eq!(DoHError::StaleKey.to_string(), "Stale key material");
+        assert_eq!(DoHError::TooManyTcpSessions.to_string(), "Too many TCP sessions");
+    }
+
+    #[test]
+    fn test_display_io_error() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let e = DoHError::Io(io_err);
+        let s = e.to_string();
+        assert!(s.starts_with("IO error:"), "got: {s}");
+    }
+
+    #[test]
+    fn test_display_odoh_config_error() {
+        let e = DoHError::ODoHConfigError(anyhow::anyhow!("something went wrong"));
+        let s = e.to_string();
+        assert!(s.starts_with("ODoH config error:"), "got: {s}");
+        assert!(s.contains("something went wrong"), "got: {s}");
+    }
+
+    #[test]
+    fn test_status_codes_simple_variants() {
+        assert_eq!(StatusCode::from(DoHError::Incomplete), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(StatusCode::from(DoHError::InvalidData), StatusCode::BAD_REQUEST);
+        assert_eq!(StatusCode::from(DoHError::TooLarge), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(StatusCode::from(DoHError::UpstreamIssue), StatusCode::BAD_GATEWAY);
+        assert_eq!(StatusCode::from(DoHError::UpstreamTimeout), StatusCode::BAD_GATEWAY);
+        assert_eq!(StatusCode::from(DoHError::StaleKey), StatusCode::UNAUTHORIZED);
+        assert_eq!(StatusCode::from(DoHError::TooManyTcpSessions), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn test_status_code_io_error() {
+        let io_err = io::Error::new(io::ErrorKind::Other, "test");
+        assert_eq!(StatusCode::from(DoHError::Io(io_err)), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_status_code_odoh_config_error() {
+        let e = DoHError::ODoHConfigError(anyhow::anyhow!("test"));
+        assert_eq!(StatusCode::from(e), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}
+
 impl From<DoHError> for StatusCode {
     fn from(e: DoHError) -> StatusCode {
         match e {

@@ -882,3 +882,285 @@ impl DoH {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── acceptable_content_type ───────────────────────────────────────────────
+
+    #[test]
+    fn test_acceptable_content_type_doh() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            hyper::header::ACCEPT,
+            "application/dns-message".parse().unwrap(),
+        );
+        let result = DoH::acceptable_content_type(
+            &headers,
+            &["application/dns-message", "application/oblivious-dns-message"],
+        );
+        assert_eq!(result, Some("application/dns-message"));
+    }
+
+    #[test]
+    fn test_acceptable_content_type_odoh() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            hyper::header::ACCEPT,
+            "application/oblivious-dns-message".parse().unwrap(),
+        );
+        let result = DoH::acceptable_content_type(
+            &headers,
+            &["application/dns-message", "application/oblivious-dns-message"],
+        );
+        assert_eq!(result, Some("application/oblivious-dns-message"));
+    }
+
+    #[test]
+    fn test_acceptable_content_type_first_match_wins() {
+        let mut headers = HeaderMap::new();
+        // Both types listed; first in Accept header that matches is returned
+        headers.insert(
+            hyper::header::ACCEPT,
+            "application/oblivious-dns-message, application/dns-message"
+                .parse()
+                .unwrap(),
+        );
+        let result = DoH::acceptable_content_type(
+            &headers,
+            &["application/dns-message", "application/oblivious-dns-message"],
+        );
+        assert_eq!(result, Some("application/oblivious-dns-message"));
+    }
+
+    #[test]
+    fn test_acceptable_content_type_no_match() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            hyper::header::ACCEPT,
+            "text/html".parse().unwrap(),
+        );
+        let result =
+            DoH::acceptable_content_type(&headers, &["application/dns-message"]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_acceptable_content_type_no_accept_header() {
+        let headers = HeaderMap::new();
+        let result =
+            DoH::acceptable_content_type(&headers, &["application/dns-message"]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_acceptable_content_type_ignores_q_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            hyper::header::ACCEPT,
+            "application/dns-message;q=0.9".parse().unwrap(),
+        );
+        let result =
+            DoH::acceptable_content_type(&headers, &["application/dns-message"]);
+        assert_eq!(result, Some("application/dns-message"));
+    }
+
+    // ── parse_content_type ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_content_type_doh() {
+        let req = Request::builder()
+            .header("content-type", "application/dns-message")
+            .body(Body::empty())
+            .unwrap();
+        let result = DoH::parse_content_type(&req);
+        assert!(matches!(result, Ok(DoHType::Standard)));
+    }
+
+    #[test]
+    fn test_parse_content_type_odoh() {
+        let req = Request::builder()
+            .header("content-type", "application/oblivious-dns-message")
+            .body(Body::empty())
+            .unwrap();
+        let result = DoH::parse_content_type(&req);
+        assert!(matches!(result, Ok(DoHType::Oblivious)));
+    }
+
+    #[test]
+    fn test_parse_content_type_json() {
+        let req = Request::builder()
+            .header("content-type", "application/dns-json")
+            .body(Body::empty())
+            .unwrap();
+        let result = DoH::parse_content_type(&req);
+        assert!(matches!(result, Ok(DoHType::Json)));
+    }
+
+    #[test]
+    fn test_parse_content_type_case_insensitive() {
+        let req = Request::builder()
+            .header("content-type", "Application/DNS-Message")
+            .body(Body::empty())
+            .unwrap();
+        let result = DoH::parse_content_type(&req);
+        assert!(matches!(result, Ok(DoHType::Standard)));
+    }
+
+    #[test]
+    fn test_parse_content_type_unknown_returns_415() {
+        let req = Request::builder()
+            .header("content-type", "text/html")
+            .body(Body::empty())
+            .unwrap();
+        let result = DoH::parse_content_type(&req);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[test]
+    fn test_parse_content_type_no_content_type_with_accept() {
+        // No Content-Type but valid Accept header → resolved via acceptable_content_type
+        let req = Request::builder()
+            .header("accept", "application/dns-message")
+            .body(Body::empty())
+            .unwrap();
+        let result = DoH::parse_content_type(&req);
+        assert!(matches!(result, Ok(DoHType::Standard)));
+    }
+
+    #[test]
+    fn test_parse_content_type_no_headers_returns_406() {
+        let req = Request::builder().body(Body::empty()).unwrap();
+        let result = DoH::parse_content_type(&req);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().status(), StatusCode::NOT_ACCEPTABLE);
+    }
+
+    // ── hostname_uuid ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_hostname_uuid_is_deterministic() {
+        let u1 = DoH::hostname_uuid("example.com", 0);
+        let u2 = DoH::hostname_uuid("example.com", 0);
+        assert_eq!(u1, u2);
+    }
+
+    #[test]
+    fn test_hostname_uuid_different_salt_gives_different_uuid() {
+        let u0 = DoH::hostname_uuid("example.com", 0);
+        let u1 = DoH::hostname_uuid("example.com", 1);
+        assert_ne!(u0, u1);
+    }
+
+    #[test]
+    fn test_hostname_uuid_different_hostname_gives_different_uuid() {
+        let u1 = DoH::hostname_uuid("example.com", 0);
+        let u2 = DoH::hostname_uuid("other.com", 0);
+        assert_ne!(u1, u2);
+    }
+
+    #[test]
+    fn test_hostname_uuid_format() {
+        let u = DoH::hostname_uuid("example.com", 0);
+        // Expected format: xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx
+        let parts: Vec<&str> = u.split('-').collect();
+        assert_eq!(parts.len(), 5, "UUID should have 5 hyphen-separated parts");
+        assert_eq!(parts[0].len(), 8);
+        assert_eq!(parts[1].len(), 4);
+        assert_eq!(parts[2].len(), 4);
+        assert_eq!(parts[3].len(), 4);
+        assert_eq!(parts[4].len(), 12);
+        // Version nibble should be '4'
+        assert_eq!(&parts[2][..1], "4", "version nibble should be 4");
+        // Variant bits: high two bits of parts[3] should be '10' (0x8-0xb)
+        let variant_nibble = u8::from_str_radix(&parts[3][..1], 16).unwrap();
+        assert!((8..=0xb).contains(&variant_nibble), "variant nibble {variant_nibble} should be 0x8-0xb");
+    }
+
+    // ── parse_json_query_params ───────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_json_query_params_name() {
+        let q = DoH::parse_json_query_params("name=example.com");
+        assert_eq!(q.name, "example.com");
+        assert!(q.qtype.is_none());
+    }
+
+    #[test]
+    fn test_parse_json_query_params_name_and_type_string() {
+        let q = DoH::parse_json_query_params("name=example.com&type=AAAA");
+        assert_eq!(q.name, "example.com");
+        assert_eq!(q.qtype, Some(28));
+    }
+
+    #[test]
+    fn test_parse_json_query_params_name_and_type_numeric() {
+        let q = DoH::parse_json_query_params("name=example.com&type=1");
+        assert_eq!(q.qtype, Some(1));
+    }
+
+    #[test]
+    fn test_parse_json_query_params_cd_flag() {
+        let q = DoH::parse_json_query_params("name=x.com&cd=1");
+        assert_eq!(q.cd, Some(true));
+
+        let q2 = DoH::parse_json_query_params("name=x.com&cd=true");
+        assert_eq!(q2.cd, Some(true));
+
+        let q3 = DoH::parse_json_query_params("name=x.com&cd=0");
+        assert_eq!(q3.cd, Some(false));
+    }
+
+    #[test]
+    fn test_parse_json_query_params_do_flag() {
+        let q = DoH::parse_json_query_params("name=x.com&do=1");
+        assert_eq!(q.do_, Some(true));
+
+        let q2 = DoH::parse_json_query_params("name=x.com&do=false");
+        assert_eq!(q2.do_, Some(false));
+    }
+
+    #[test]
+    fn test_parse_json_query_params_url_encoded_name() {
+        let q = DoH::parse_json_query_params("name=example%2Ecom");
+        assert_eq!(q.name, "example.com");
+    }
+
+    #[test]
+    fn test_parse_json_query_params_empty_string() {
+        let q = DoH::parse_json_query_params("");
+        assert_eq!(q.name, "");
+    }
+
+    // ── validate_json_query ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_json_query_ok() {
+        let q = dns_json::DnsJsonQuery {
+            name: "example.com".to_string(),
+            qtype: None,
+            cd: None,
+            ct: None,
+            do_: None,
+            edns_client_subnet: None,
+        };
+        assert!(DoH::validate_json_query(&q).is_ok());
+    }
+
+    #[test]
+    fn test_validate_json_query_empty_name_error() {
+        let q = dns_json::DnsJsonQuery {
+            name: String::new(),
+            qtype: None,
+            cd: None,
+            ct: None,
+            do_: None,
+            edns_client_subnet: None,
+        };
+        let result = DoH::validate_json_query(&q);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("name"), "error should mention 'name'");
+    }
+}

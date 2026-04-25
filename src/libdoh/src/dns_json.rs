@@ -479,4 +479,204 @@ mod tests {
         let formatted = std::net::Ipv6Addr::from(bytes).to_string();
         assert_eq!(formatted, "::1");
     }
+
+    // ── parse_dns_to_json ─────────────────────────────────────────────────────
+
+    /// Build a minimal DNS response for `example.com` A = 1.2.3.4, TTL = 3600.
+    fn make_a_response() -> Vec<u8> {
+        vec![
+            0x00, 0x01, // Transaction ID
+            0x81, 0x80, // Flags: QR=1, RD=1, RA=1, RCODE=0 (NOERROR)
+            0x00, 0x01, // QDCOUNT: 1
+            0x00, 0x01, // ANCOUNT: 1
+            0x00, 0x00, // NSCOUNT: 0
+            0x00, 0x00, // ARCOUNT: 0
+            // Question: example.com A IN
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+            0x03, b'c', b'o', b'm',
+            0x00,
+            0x00, 0x01, // QTYPE: A
+            0x00, 0x01, // QCLASS: IN
+            // Answer: example.com -> 1.2.3.4, TTL=3600
+            0xc0, 0x0c, // Name: pointer to offset 12
+            0x00, 0x01, // TYPE: A
+            0x00, 0x01, // CLASS: IN
+            0x00, 0x00, 0x0e, 0x10, // TTL: 3600
+            0x00, 0x04, // RDLENGTH: 4
+            0x01, 0x02, 0x03, 0x04, // 1.2.3.4
+        ]
+    }
+
+    /// Build a minimal DNS response for `example.com` AAAA = ::1, TTL = 60.
+    fn make_aaaa_response() -> Vec<u8> {
+        let mut p = vec![
+            0x00, 0x02, // Transaction ID
+            0x81, 0x80, // Flags: QR=1, RD=1, RA=1, RCODE=0
+            0x00, 0x01, // QDCOUNT: 1
+            0x00, 0x01, // ANCOUNT: 1
+            0x00, 0x00, // NSCOUNT: 0
+            0x00, 0x00, // ARCOUNT: 0
+            // Question: example.com AAAA IN
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+            0x03, b'c', b'o', b'm',
+            0x00,
+            0x00, 0x1c, // QTYPE: AAAA
+            0x00, 0x01, // QCLASS: IN
+            // Answer: example.com -> ::1, TTL=60
+            0xc0, 0x0c, // Name: pointer to offset 12
+            0x00, 0x1c, // TYPE: AAAA
+            0x00, 0x01, // CLASS: IN
+            0x00, 0x00, 0x00, 0x3c, // TTL: 60
+            0x00, 0x10, // RDLENGTH: 16
+        ];
+        // ::1 in 16 bytes
+        p.extend_from_slice(&[0u8; 15]);
+        p.push(0x01);
+        p
+    }
+
+    #[test]
+    fn test_parse_dns_to_json_a_record() {
+        let packet = make_a_response();
+        let result = parse_dns_to_json(&packet);
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+        let json = result.unwrap();
+
+        assert_eq!(json.status, 0); // NOERROR
+        assert!(!json.tc);
+        assert!(json.rd);
+        assert!(json.ra);
+
+        let questions = json.question.expect("question section missing");
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].name, "example.com");
+        assert_eq!(questions[0].qtype, 1); // A
+
+        let answers = json.answer.expect("answer section missing");
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].rtype, 1); // A
+        assert_eq!(answers[0].ttl, 3600);
+        assert_eq!(answers[0].data, "1.2.3.4");
+    }
+
+    #[test]
+    fn test_parse_dns_to_json_aaaa_record() {
+        let packet = make_aaaa_response();
+        let result = parse_dns_to_json(&packet);
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+        let json = result.unwrap();
+
+        assert_eq!(json.status, 0);
+        let answers = json.answer.expect("answer section missing");
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].rtype, 28); // AAAA
+        assert_eq!(answers[0].ttl, 60);
+        assert_eq!(answers[0].data, "::1");
+    }
+
+    #[test]
+    fn test_parse_dns_to_json_no_answer() {
+        // A minimal query (no answers) – status should reflect flags
+        let packet = vec![
+            0x00, 0x01,
+            0x81, 0x83, // QR=1, RD=1, RA=1, RCODE=3 (NXDOMAIN)
+            0x00, 0x01, // QDCOUNT: 1
+            0x00, 0x00, // ANCOUNT: 0
+            0x00, 0x00, // NSCOUNT: 0
+            0x00, 0x00, // ARCOUNT: 0
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+            0x03, b'c', b'o', b'm',
+            0x00,
+            0x00, 0x01,
+            0x00, 0x01,
+        ];
+        let result = parse_dns_to_json(&packet);
+        assert!(result.is_ok());
+        let json = result.unwrap();
+        assert_eq!(json.status, 3); // NXDOMAIN
+        assert!(json.answer.is_none());
+    }
+
+    #[test]
+    fn test_parse_dns_to_json_short_packet_error() {
+        let packet = vec![0u8; 5];
+        assert!(parse_dns_to_json(&packet).is_err());
+    }
+
+    // ── build_dns_query ───────────────────────────────────────────────────────
+
+    fn make_default_query(name: &str) -> DnsJsonQuery {
+        DnsJsonQuery {
+            name: name.to_string(),
+            qtype: None,
+            cd: None,
+            ct: None,
+            do_: None,
+            edns_client_subnet: None,
+        }
+    }
+
+    #[test]
+    fn test_build_dns_query_basic() {
+        let q = make_default_query("example.com");
+        let result = build_dns_query(&q);
+        assert!(result.is_ok());
+        let pkt = result.unwrap();
+        // Must be at least 17 bytes (12 header + minimal question)
+        assert!(pkt.len() >= 17);
+        // QDCOUNT = 1
+        assert_eq!(byteorder::BigEndian::read_u16(&pkt[4..6]), 1);
+        // Flags: RD set (byte 2 bit 0)
+        assert_ne!(pkt[2] & 0x01, 0);
+        // QTYPE defaults to A (1)
+        // Find the QTYPE in the question section (after the encoded name)
+        let name_end = pkt[12..].iter().position(|&b| b == 0).unwrap();
+        let qtype_offset = 12 + name_end + 1;
+        let qtype = byteorder::BigEndian::read_u16(&pkt[qtype_offset..qtype_offset + 2]);
+        assert_eq!(qtype, 1); // A
+    }
+
+    #[test]
+    fn test_build_dns_query_with_explicit_qtype() {
+        let mut q = make_default_query("example.com");
+        q.qtype = Some(28); // AAAA
+        let pkt = build_dns_query(&q).unwrap();
+        let name_end = pkt[12..].iter().position(|&b| b == 0).unwrap();
+        let qtype_offset = 12 + name_end + 1;
+        let qtype = byteorder::BigEndian::read_u16(&pkt[qtype_offset..qtype_offset + 2]);
+        assert_eq!(qtype, 28); // AAAA
+    }
+
+    #[test]
+    fn test_build_dns_query_cd_flag() {
+        let mut q = make_default_query("example.com");
+        q.cd = Some(true);
+        let pkt = build_dns_query(&q).unwrap();
+        // CD flag is bit 4 of byte 3
+        assert_ne!(pkt[3] & 0x10, 0, "CD flag should be set");
+    }
+
+    #[test]
+    fn test_build_dns_query_no_cd_flag() {
+        let q = make_default_query("example.com");
+        let pkt = build_dns_query(&q).unwrap();
+        assert_eq!(pkt[3] & 0x10, 0, "CD flag should not be set");
+    }
+
+    #[test]
+    fn test_build_dns_query_with_do_flag_adds_edns() {
+        let mut q = make_default_query("example.com");
+        q.do_ = Some(true);
+        let pkt = build_dns_query(&q).unwrap();
+        // ARCOUNT should be 1 (OPT record added)
+        assert_eq!(byteorder::BigEndian::read_u16(&pkt[10..12]), 1);
+    }
+
+    #[test]
+    fn test_build_dns_query_no_edns_by_default() {
+        let q = make_default_query("example.com");
+        let pkt = build_dns_query(&q).unwrap();
+        // ARCOUNT should be 0
+        assert_eq!(byteorder::BigEndian::read_u16(&pkt[10..12]), 0);
+    }
 }

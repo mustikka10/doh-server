@@ -228,6 +228,329 @@ fn padded_len(unpadded_len: usize) -> usize {
         .unwrap_or(DNS_MAX_PACKET_SIZE)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// Minimal DNS query for `example.com` A IN (no additional records).
+    fn make_query() -> Vec<u8> {
+        vec![
+            0x00, 0x01, // Transaction ID
+            0x01, 0x00, // Flags: RD=1
+            0x00, 0x01, // QDCOUNT: 1
+            0x00, 0x00, // ANCOUNT: 0
+            0x00, 0x00, // NSCOUNT: 0
+            0x00, 0x00, // ARCOUNT: 0
+            // Question: "example.com" A IN
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+            0x03, b'c', b'o', b'm',
+            0x00,
+            0x00, 0x01, // QTYPE: A
+            0x00, 0x01, // QCLASS: IN
+        ]
+    }
+
+    /// DNS response for `example.com` A = 1.2.3.4, TTL = 3600.
+    fn make_response_a() -> Vec<u8> {
+        vec![
+            0x00, 0x01, // Transaction ID
+            0x81, 0x80, // Flags: QR=1, RD=1, RA=1
+            0x00, 0x01, // QDCOUNT: 1
+            0x00, 0x01, // ANCOUNT: 1
+            0x00, 0x00, // NSCOUNT: 0
+            0x00, 0x00, // ARCOUNT: 0
+            // Question
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
+            0x03, b'c', b'o', b'm',
+            0x00,
+            0x00, 0x01, // QTYPE: A
+            0x00, 0x01, // QCLASS: IN
+            // Answer
+            0xc0, 0x0c, // Name: pointer to offset 12
+            0x00, 0x01, // TYPE: A
+            0x00, 0x01, // CLASS: IN
+            0x00, 0x00, 0x0e, 0x10, // TTL: 3600
+            0x00, 0x04, // RDLENGTH: 4
+            0x01, 0x02, 0x03, 0x04, // 1.2.3.4
+        ]
+    }
+
+    // ── Header field accessors ────────────────────────────────────────────────
+
+    #[test]
+    fn test_rcode_noerror() {
+        let mut p = make_query();
+        p[3] = 0x00;
+        assert_eq!(rcode(&p), 0);
+    }
+
+    #[test]
+    fn test_rcode_servfail() {
+        let mut p = make_query();
+        p[3] = 0x02;
+        assert_eq!(rcode(&p), 2);
+    }
+
+    #[test]
+    fn test_rcode_nxdomain() {
+        let mut p = make_query();
+        p[3] = 0x03;
+        assert_eq!(rcode(&p), 3);
+    }
+
+    #[test]
+    fn test_rcode_refused() {
+        let mut p = make_query();
+        p[3] = 0x05;
+        assert_eq!(rcode(&p), 5);
+    }
+
+    #[test]
+    fn test_qdcount() {
+        let p = make_query();
+        assert_eq!(qdcount(&p), 1);
+    }
+
+    #[test]
+    fn test_ancount_zero() {
+        let p = make_query();
+        assert_eq!(ancount(&p), 0);
+    }
+
+    #[test]
+    fn test_ancount_one() {
+        let p = make_response_a();
+        assert_eq!(ancount(&p), 1);
+    }
+
+    #[test]
+    fn test_arcount_zero() {
+        let p = make_query();
+        assert_eq!(arcount(&p), 0);
+    }
+
+    // ── Flag checks ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_recoverable_error_servfail() {
+        let mut p = make_query();
+        p[3] = 0x02; // SERVFAIL
+        assert!(is_recoverable_error(&p));
+    }
+
+    #[test]
+    fn test_is_recoverable_error_refused() {
+        let mut p = make_query();
+        p[3] = 0x05; // REFUSED
+        assert!(is_recoverable_error(&p));
+    }
+
+    #[test]
+    fn test_is_not_recoverable_noerror() {
+        let mut p = make_query();
+        p[3] = 0x00;
+        assert!(!is_recoverable_error(&p));
+    }
+
+    #[test]
+    fn test_is_not_recoverable_nxdomain() {
+        let mut p = make_query();
+        p[3] = 0x03; // NXDOMAIN
+        assert!(!is_recoverable_error(&p));
+    }
+
+    #[test]
+    fn test_is_truncated_false() {
+        let mut p = make_query();
+        p[2] = 0x01; // RD only, TC bit clear
+        p[3] = 0x00;
+        assert!(!is_truncated(&p));
+    }
+
+    #[test]
+    fn test_is_truncated_true() {
+        let mut p = make_query();
+        // DNS_FLAGS_TC = 1u16 << 9 = 0x0200  ->  byte 2 has bit 1 set
+        p[2] = 0x02; // TC bit set
+        p[3] = 0x00;
+        assert!(is_truncated(&p));
+    }
+
+    #[test]
+    fn test_is_truncated_with_rd_and_tc() {
+        let mut p = make_query();
+        p[2] = 0x03; // RD and TC both set
+        p[3] = 0x00;
+        assert!(is_truncated(&p));
+    }
+
+    // ── Name parsing ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_skip_name_simple() {
+        let p = make_query();
+        // Name at offset 12: 7"example" 3"com" 0
+        // Expected end offset: 12 + 8 + 4 + 1 = 25
+        let result = skip_name(&p, DNS_OFFSET_QUESTION);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 25);
+    }
+
+    #[test]
+    fn test_skip_name_compressed_pointer() {
+        let p = make_response_a();
+        // Answer name at offset 29 is a compression pointer (0xc0 0x0c)
+        let result = skip_name(&p, 29);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 31); // pointer advances by 2 bytes
+    }
+
+    #[test]
+    fn test_skip_name_short_packet_error() {
+        // A 1-byte packet at offset 0: ensure!(0 < 1-1) → 0 < 0 = false → Err
+        let p = vec![0u8; 1];
+        assert!(skip_name(&p, 0).is_err());
+    }
+
+    #[test]
+    fn test_skip_name_label_exceeds_packet_error() {
+        // First byte claims label length 5, but only 1 more byte follows
+        let p = vec![5u8, b'a'];
+        assert!(skip_name(&p, 0).is_err());
+    }
+
+    #[test]
+    fn test_skip_name_incomplete_pointer_error() {
+        // Compression pointer at the very end of packet (missing second byte)
+        let p = vec![0xc0u8]; // just one byte of a pointer
+        assert!(skip_name(&p, 0).is_err());
+    }
+
+    // ── TTL calculation ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_min_ttl_with_one_record() {
+        let p = make_response_a(); // TTL = 3600
+        let result = min_ttl(&p, 10, 86400, 2);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 3600);
+    }
+
+    #[test]
+    fn test_min_ttl_clamped_to_minimum() {
+        let mut p = make_response_a();
+        // Set TTL to 1 second (below min_ttl of 10)
+        p[35] = 0x00;
+        p[36] = 0x00;
+        p[37] = 0x00;
+        p[38] = 0x01;
+        let result = min_ttl(&p, 10, 86400, 2);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 10);
+    }
+
+    #[test]
+    fn test_min_ttl_clamped_to_maximum() {
+        let mut p = make_response_a();
+        // Set TTL to a huge value (above max_ttl of 100)
+        p[35] = 0x00;
+        p[36] = 0x01;
+        p[37] = 0x00;
+        p[38] = 0x00; // TTL = 65536
+        let result = min_ttl(&p, 10, 100, 2);
+        assert!(result.is_ok());
+        // found_min_ttl starts at max_ttl (100), record TTL is 65536 which is NOT less than 100
+        // so found_min_ttl stays at 100
+        assert_eq!(result.unwrap(), 100);
+    }
+
+    #[test]
+    fn test_min_ttl_query_only_packet_error() {
+        // A query packet (header + question only) has exactly 4 bytes remaining
+        // after the name, but min_ttl requires > 4 bytes to distinguish the
+        // question type/class from record data — so it returns Err for such packets.
+        let p = make_query();
+        let result = min_ttl(&p, 0, 86400, 7);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_min_ttl_short_packet_error() {
+        let p = vec![0u8; 5];
+        assert!(min_ttl(&p, 10, 86400, 2).is_err());
+    }
+
+    #[test]
+    fn test_min_ttl_no_question_error() {
+        let mut p = make_query();
+        p[4] = 0x00;
+        p[5] = 0x00; // QDCOUNT = 0
+        assert!(min_ttl(&p, 10, 86400, 2).is_err());
+    }
+
+    // ── EDNS max payload size ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_edns_max_payload_size_adds_opt_record() {
+        let mut p = make_query();
+        assert_eq!(arcount(&p), 0);
+        let result = set_edns_max_payload_size(&mut p, 4096);
+        assert!(result.is_ok());
+        // A new OPT record should have been appended
+        assert_eq!(arcount(&p), 1);
+    }
+
+    #[test]
+    fn test_set_edns_max_payload_size_updates_existing_opt() {
+        let mut p = make_query();
+        // Add a first OPT record at 1280 bytes
+        set_edns_max_payload_size(&mut p, 1280).unwrap();
+        assert_eq!(arcount(&p), 1);
+        let len_after_first = p.len();
+
+        // Update to 4096 – should not add another OPT record
+        set_edns_max_payload_size(&mut p, 4096).unwrap();
+        assert_eq!(arcount(&p), 1);
+        assert_eq!(p.len(), len_after_first); // same length
+    }
+
+    #[test]
+    fn test_set_edns_max_payload_size_short_packet_error() {
+        let mut p = vec![0u8; 5];
+        assert!(set_edns_max_payload_size(&mut p, 4096).is_err());
+    }
+
+    // ── EDNS padding ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_add_edns_padding_grows_packet() {
+        let mut p = make_query();
+        set_edns_max_payload_size(&mut p, 4096).unwrap();
+        let len_before = p.len();
+        let result = add_edns_padding(&mut p);
+        assert!(result.is_ok());
+        assert!(p.len() >= len_before);
+    }
+
+    #[test]
+    fn test_add_edns_padding_adds_opt_if_missing() {
+        let mut p = make_query();
+        assert_eq!(arcount(&p), 0);
+        let result = add_edns_padding(&mut p);
+        assert!(result.is_ok());
+        // padding also creates OPT record when absent
+        assert_eq!(arcount(&p), 1);
+    }
+
+    #[test]
+    fn test_add_edns_padding_short_packet_error() {
+        let mut p = vec![0u8; 5];
+        assert!(add_edns_padding(&mut p).is_err());
+    }
+}
+
 pub fn add_edns_padding(packet: &mut Vec<u8>) -> Result<(), Error> {
     let mut packet_len = packet.len();
     ensure!(packet_len > DNS_OFFSET_QUESTION, "Short packet");
