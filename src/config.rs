@@ -334,6 +334,8 @@ pub fn parse_opts(globals: &mut Globals) {
 
     match matches.get_one::<String>("hostname") {
         Some(hostname) => {
+            globals.hostname = Some(hostname.to_string());
+
             let public_addresses: Vec<&String> = matches
                 .get_many::<String>("public_address")
                 .map(|values| values.collect())

@@ -49,6 +49,9 @@ A fast and secure DoH (DNS-over-HTTPS) and ODoH (Oblivious DoH) server.
     - [Common Issues](#common-issues)
     - [Performance Tuning](#performance-tuning)
   - [Clients](#clients)
+  - [iPhone / iOS Configuration Profile](#iphone--ios-configuration-profile)
+    - [Requirements](#requirements)
+    - [Installing the profile on iPhone](#installing-the-profile-on-iphone)
   - [Public Deployments](#public-deployments)
   - [Contributing](#contributing)
   - [License](#license)
@@ -546,6 +549,37 @@ Compatible DoH clients include:
 - Firefox, Chrome, Edge (native DoH support)
 - [doh-client](https://github.com/LinkTed/doh-client) - Rust DoH client
 - Android 9+ and iOS 14+ (native DoH support)
+
+## iPhone / iOS Configuration Profile
+
+iOS 14 and later support DNS-over-HTTPS natively. `doh-proxy` can serve a ready-made
+`.mobileconfig` profile that configures your iPhone or iPad to use this server for all
+DNS queries.
+
+### Requirements
+
+Start `doh-proxy` with the `-H <hostname>` flag so the server knows the public hostname
+to embed in the profile:
+
+```sh
+doh-proxy -H 'doh.example.com' -u 127.0.0.1:53
+```
+
+### Installing the profile on iPhone
+
+1. **Open Safari** on the iPhone and navigate to:
+   ```
+   https://doh.example.com/doh-profile.mobileconfig
+   ```
+2. Tap **Allow** when Safari asks whether to download the configuration profile.
+3. Open the **Settings** app → **General** → **VPN & Device Management**.
+4. Tap the downloaded profile and tap **Install**. Enter your passcode if prompted.
+5. Tap **Install** again to confirm.
+
+All DNS queries from the device are now routed through your DoH server.
+
+> **Note:** The profile can be removed at any time via Settings → General →
+> VPN & Device Management → tap the profile → Remove Profile.
 
 ## Public Deployments
 

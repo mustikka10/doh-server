@@ -36,6 +36,8 @@ pub struct Globals {
     pub ecs_prefix_v6: u8,
     pub odoh_configs_path: String,
     pub odoh_rotator: Arc<ODoHRotator>,
+    pub mobileconfig_path: String,
+    pub hostname: Option<String>,
 
     pub runtime_handle: runtime::Handle,
 }

@@ -83,6 +83,8 @@ fn main() {
         ecs_prefix_v6: 56,
         odoh_configs_path: ODOH_CONFIGS_PATH.to_string(),
         odoh_rotator: Arc::new(rotator),
+        mobileconfig_path: MOBILECONFIG_PATH.to_string(),
+        hostname: None,
 
         runtime_handle: runtime.handle().clone(),
     };

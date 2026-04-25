@@ -141,6 +141,11 @@ impl hyper::service::Service<http::Request<Body>> for DoH {
                 Method::GET => Box::pin(async move { self_inner.serve_odoh_configs().await }),
                 _ => Box::pin(async { http_error(StatusCode::METHOD_NOT_ALLOWED) }),
             }
+        } else if req.uri().path() == globals.mobileconfig_path {
+            match *req.method() {
+                Method::GET => Box::pin(async move { self_inner.serve_mobileconfig().await }),
+                _ => Box::pin(async { http_error(StatusCode::METHOD_NOT_ALLOWED) }),
+            }
         } else {
             Box::pin(async { http_error(StatusCode::NOT_FOUND) })
         }
@@ -296,6 +301,127 @@ impl DoH {
             Ok(resp) => Ok(resp),
             Err(e) => http_error(StatusCode::from(e)),
         }
+    }
+
+    async fn serve_mobileconfig(&self) -> Result<Response<Body>, http::Error> {
+        let hostname = match &self.globals.hostname {
+            Some(h) => h.clone(),
+            None => {
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from(
+                        "Set the -H <hostname> option to enable the iOS profile endpoint.",
+                    ))
+                    .or_else(|_| http_error(StatusCode::INTERNAL_SERVER_ERROR));
+            }
+        };
+
+        let server_url = format!("https://{}{}", hostname, self.globals.path);
+
+        // Generate deterministic UUIDs from the hostname so the profile is
+        // identical on every download (allows caching and avoids per-request
+        // uniqueness that could be used as a tracking vector).
+        let uuid = Self::hostname_uuid(&hostname, 0);
+        let payload_uuid = Self::hostname_uuid(&hostname, 1);
+
+        let profile = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>DNSSettings</key>
+            <dict>
+                <key>DNSProtocol</key>
+                <string>HTTPS</string>
+                <key>ServerURL</key>
+                <string>{server_url}</string>
+                <key>ServerAddresses</key>
+                <array/>
+            </dict>
+            <key>PayloadDescription</key>
+            <string>Configures DNS-over-HTTPS using {hostname}</string>
+            <key>PayloadDisplayName</key>
+            <string>DNS Settings</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.dnsSettings.managed.{payload_uuid}</string>
+            <key>PayloadType</key>
+            <string>com.apple.dnsSettings.managed</string>
+            <key>PayloadUUID</key>
+            <string>{payload_uuid}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>ProhibitDisablement</key>
+            <false/>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>Routes all DNS queries through {hostname} using DNS-over-HTTPS.</string>
+    <key>PayloadDisplayName</key>
+    <string>DoH – {hostname}</string>
+    <key>PayloadIdentifier</key>
+    <string>com.doh-proxy.dns.{uuid}</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{uuid}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+"#,
+            server_url = server_url,
+            hostname = hostname,
+            uuid = uuid,
+            payload_uuid = payload_uuid,
+        );
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(hyper::header::CONTENT_TYPE, "application/x-apple-aspen-config")
+            .header(
+                hyper::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"doh-profile.mobileconfig\"",
+            )
+            .header(hyper::header::CACHE_CONTROL, "max-age=3600")
+            .body(Body::from(profile))
+            .or_else(|_| http_error(StatusCode::INTERNAL_SERVER_ERROR))
+    }
+
+    /// Produce a deterministic UUID v4-shaped string derived from `hostname`
+    /// and a `salt` index. Uses a simple FNV-1a hash over the input bytes to
+    /// generate 128 bits of stable data, then formats them with the version 4
+    /// and variant bits applied.
+    fn hostname_uuid(hostname: &str, salt: u64) -> String {
+        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+        const FNV_PRIME: u64 = 0x00000100000001b3;
+
+        let mut h = FNV_OFFSET ^ salt.wrapping_mul(FNV_PRIME);
+        for &b in hostname.as_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+        // Derive a second 64-bit word from a different starting point.
+        let mut h2 = FNV_OFFSET ^ (salt.wrapping_add(1)).wrapping_mul(FNV_PRIME);
+        for &b in hostname.as_bytes().iter().rev() {
+            h2 ^= b as u64;
+            h2 = h2.wrapping_mul(FNV_PRIME);
+        }
+
+        let time_low = (h >> 32) as u32;
+        let time_mid = (h >> 16) as u16;
+        let time_hi_ver = ((h as u16) & 0x0fff) | 0x4000;
+        let clock_seq = ((h2 >> 48) as u16 & 0x3fff) | 0x8000;
+        let node = h2 & 0xffff_ffff_ffff;
+
+        format!(
+            "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+            time_low, time_mid, time_hi_ver, clock_seq, node
+        )
     }
 
     /// Parse query parameters from URL query string into DnsJsonQuery
