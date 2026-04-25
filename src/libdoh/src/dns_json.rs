@@ -211,27 +211,17 @@ fn parse_rrs(
 
         let data = match rtype {
             TYPE_A if rdlength == 4 => {
-                format!(
-                    "{}.{}.{}.{}",
+                std::net::Ipv4Addr::new(
                     packet[offset],
                     packet[offset + 1],
                     packet[offset + 2],
-                    packet[offset + 3]
+                    packet[offset + 3],
                 )
+                .to_string()
             }
             TYPE_AAAA if rdlength == 16 => {
-                let addr = &packet[offset..offset + 16];
-                format!(
-                    "{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}",
-                    BigEndian::read_u16(&addr[0..2]),
-                    BigEndian::read_u16(&addr[2..4]),
-                    BigEndian::read_u16(&addr[4..6]),
-                    BigEndian::read_u16(&addr[6..8]),
-                    BigEndian::read_u16(&addr[8..10]),
-                    BigEndian::read_u16(&addr[10..12]),
-                    BigEndian::read_u16(&addr[12..14]),
-                    BigEndian::read_u16(&addr[14..16])
-                )
+                let addr_bytes: [u8; 16] = packet[offset..offset + 16].try_into().unwrap();
+                std::net::Ipv6Addr::from(addr_bytes).to_string()
             }
             TYPE_CNAME | TYPE_NS | TYPE_PTR => {
                 let (domain, _) = parse_name(packet, offset)?;
@@ -308,6 +298,37 @@ fn parse_rrs(
     }
 
     Ok((records, offset))
+}
+
+/// Parse a DNS record type from either a number string or a canonical type name.
+/// Supports both numeric values ("1", "28") and string names ("A", "AAAA", "any").
+pub fn parse_dns_type(s: &str) -> Option<u16> {
+    if let Ok(n) = s.parse::<u16>() {
+        return Some(n);
+    }
+    match s.to_ascii_uppercase().as_str() {
+        "A" => Some(1),
+        "NS" => Some(2),
+        "CNAME" => Some(5),
+        "SOA" => Some(6),
+        "PTR" => Some(12),
+        "MX" => Some(15),
+        "TXT" => Some(16),
+        "AAAA" => Some(28),
+        "SRV" => Some(33),
+        "DS" => Some(43),
+        "SSHFP" => Some(44),
+        "RRSIG" => Some(46),
+        "NSEC" => Some(47),
+        "DNSKEY" => Some(48),
+        "NSEC3" => Some(50),
+        "TLSA" => Some(52),
+        "HTTPS" => Some(65),
+        "SVCB" => Some(64),
+        "CAA" => Some(257),
+        "ANY" => Some(255),
+        _ => None,
+    }
 }
 
 // Parse JSON API query parameters
@@ -406,3 +427,56 @@ pub fn build_dns_query(query: &DnsJsonQuery) -> Result<Vec<u8>, Error> {
 // Export base64 for reuse
 use base64::Engine;
 pub const BASE64_STD: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_dns_type_numeric() {
+        assert_eq!(parse_dns_type("1"), Some(1));
+        assert_eq!(parse_dns_type("28"), Some(28));
+        assert_eq!(parse_dns_type("255"), Some(255));
+        assert_eq!(parse_dns_type("65535"), Some(65535));
+        assert_eq!(parse_dns_type("99999"), None); // out of u16 range
+    }
+
+    #[test]
+    fn test_parse_dns_type_string() {
+        assert_eq!(parse_dns_type("A"), Some(1));
+        assert_eq!(parse_dns_type("AAAA"), Some(28));
+        assert_eq!(parse_dns_type("MX"), Some(15));
+        assert_eq!(parse_dns_type("TXT"), Some(16));
+        assert_eq!(parse_dns_type("NS"), Some(2));
+        assert_eq!(parse_dns_type("CNAME"), Some(5));
+        assert_eq!(parse_dns_type("SOA"), Some(6));
+        assert_eq!(parse_dns_type("PTR"), Some(12));
+        assert_eq!(parse_dns_type("SRV"), Some(33));
+        assert_eq!(parse_dns_type("CAA"), Some(257));
+        assert_eq!(parse_dns_type("ANY"), Some(255));
+    }
+
+    #[test]
+    fn test_parse_dns_type_case_insensitive() {
+        assert_eq!(parse_dns_type("aaaa"), Some(28));
+        assert_eq!(parse_dns_type("Aaaa"), Some(28));
+        assert_eq!(parse_dns_type("any"), Some(255));
+        assert_eq!(parse_dns_type("mx"), Some(15));
+    }
+
+    #[test]
+    fn test_parse_dns_type_unknown() {
+        assert_eq!(parse_dns_type("UNKNOWN"), None);
+        assert_eq!(parse_dns_type(""), None);
+        assert_eq!(parse_dns_type("notatype"), None);
+    }
+
+    #[test]
+    fn test_ipv6_formatting() {
+        // Build a fake AAAA answer for ::1
+        let addr = std::net::Ipv6Addr::LOCALHOST;
+        let bytes = addr.octets();
+        let formatted = std::net::Ipv6Addr::from(bytes).to_string();
+        assert_eq!(formatted, "::1");
+    }
+}

@@ -442,7 +442,7 @@ impl DoH {
                     "name" => {
                         json_query.name = urlencoding::decode(v).unwrap_or_default().into_owned()
                     }
-                    "type" => json_query.qtype = v.parse().ok(),
+                    "type" => json_query.qtype = dns_json::parse_dns_type(v),
                     "cd" => json_query.cd = Some(v == "1" || v == "true"),
                     "ct" => json_query.ct = Some(v.to_string()),
                     "do" => json_query.do_ = Some(v == "1" || v == "true"),
